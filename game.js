@@ -62,20 +62,32 @@ const RADII  = [0, 16, 30, 50];   // por tamaño 1, 2, 3
 const SPEEDS = [0, 85, 55, 32];   // velocidad base por tamaño
 const POINTS = [0, 100, 50, 20];  // puntos por tamaño
 
+// ── Estrella fugaz ──
+const FUGAZ_SPEED    = 220;  // mucho más rápida que un asteroide normal
+const FUGAZ_TTL      = 6;    // segundos antes de desvanecerse
+const FUGAZ_POINTS   = 150;  // recompensa al destruirla
+const FUGAZ_INTERVAL = 15;   // segundos entre apariciones
+const FUGAZ_MAX      = 1;    // máximo simultáneo en pantalla
+
 class Asteroid {
-  constructor(x, y, size = 3) {
+  constructor(x, y, size = 3, opts = {}) {
     this.x    = x;
     this.y    = y;
     this.size = size;
     this.radius = RADII[size];
     this.dead = false;
+    this.fugaz = !!opts.fugaz;
 
     const angle = rand(0, Math.PI * 2);
-    const speed = SPEEDS[size] + rand(-15, 15);
+    const speed = this.fugaz
+      ? FUGAZ_SPEED + rand(-20, 20)
+      : SPEEDS[size] + rand(-15, 15);
     this.vx = Math.cos(angle) * speed;
     this.vy = Math.sin(angle) * speed;
     this.rotSpeed = rand(-1.2, 1.2);
     this.rot = rand(0, Math.PI * 2);
+    this.ttl  = this.fugaz ? FUGAZ_TTL : Infinity;
+    this.life = this.ttl;
 
     // Polígono irregular
     const n = randInt(8, 13);
@@ -91,9 +103,18 @@ class Asteroid {
     this.x   = wrap(this.x + this.vx * dt, W);
     this.y   = wrap(this.y + this.vy * dt, H);
     this.rot += this.rotSpeed * dt;
+    if (this.fugaz) {
+      this.ttl -= dt;
+      if (this.ttl <= 0) this.dead = true;
+    }
   }
 
   split() {
+    // La estrella fugaz se parte en 2 asteroides normales pequeños
+    if (this.fugaz) return [
+      new Asteroid(this.x, this.y, 1),
+      new Asteroid(this.x, this.y, 1),
+    ];
     if (this.size <= 1) return [];
     return [
       new Asteroid(this.x, this.y, this.size - 1),
@@ -102,10 +123,12 @@ class Asteroid {
   }
 
   draw() {
+    // Parpadeo de aviso antes de desvanecerse
+    if (this.fugaz && this.ttl < 2 && Math.floor(this.ttl * 8) % 2 === 0) return;
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.rot);
-    ctx.strokeStyle = '#fff';
+    ctx.strokeStyle = this.fugaz ? '#ffd34d' : '#fff';
     ctx.lineWidth   = 1.5;
     ctx.lineJoin    = 'round';
     ctx.beginPath();
@@ -115,6 +138,17 @@ class Asteroid {
     ctx.closePath();
     ctx.stroke();
     ctx.restore();
+    // Estela de velocidad
+    if (this.fugaz) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 211, 77, 0.5)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(this.x, this.y);
+      ctx.lineTo(this.x - this.vx * 0.12, this.y - this.vy * 0.12);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 }
 
@@ -307,6 +341,7 @@ let ship, bullets, asteroids, particles, powerups;
 let score, lives, level;
 let state;      // 'playing' | 'dead' | 'gameover'
 let deadTimer;
+let fugazTimer;
 
 function spawnAsteroids(count) {
   const SAFE_DIST = 130;
@@ -320,6 +355,17 @@ function spawnAsteroids(count) {
   }
 }
 
+function spawnFugaz() {
+  // Aparece en un borde aleatorio para cruzar la pantalla
+  const edge = randInt(0, 3);
+  let x, y;
+  if (edge === 0)      { x = rand(0, W); y = 0; }
+  else if (edge === 1) { x = W; y = rand(0, H); }
+  else if (edge === 2) { x = rand(0, W); y = H; }
+  else                 { x = 0; y = rand(0, H); }
+  asteroids.push(new Asteroid(x, y, 1, { fugaz: true }));
+}
+
 function initGame() {
   ship          = new Ship();
   bullets   = [];
@@ -330,6 +376,7 @@ function initGame() {
   lives  = 3;
   level  = 1;
   state  = 'playing';
+  fugazTimer = 8;
   spawnAsteroids(4);
 }
 
@@ -339,6 +386,7 @@ function nextLevel() {
   particles = [];
   powerups  = [];
   ship.reset();
+  fugazTimer = FUGAZ_INTERVAL;
   spawnAsteroids(3 + level);
 }
 
@@ -391,6 +439,14 @@ function update(dt) {
   particles = particles.filter(p => !p.dead);
   powerups  = powerups.filter(p => !p.dead);
 
+  // Aparición periódica de la estrella fugaz
+  fugazTimer -= dt;
+  if (fugazTimer <= 0) {
+    fugazTimer = FUGAZ_INTERVAL + rand(-3, 3);
+    const fugaces = asteroids.filter(a => a.fugaz && !a.dead).length;
+    if (fugaces < FUGAZ_MAX) spawnFugaz();
+  }
+
   // Bala vs asteroide
   const newAsteroids = [];
   for (const b of bullets) {
@@ -398,10 +454,18 @@ function update(dt) {
       if (!a.dead && !b.dead && dist(b, a) < a.radius) {
         b.dead = true;
         a.dead = true;
-        score += POINTS[a.size];
-        explode(a.x, a.y, a.size * 5);
-        newAsteroids.push(...a.split());
-        if (Math.random() < DROP_CHANCE) powerups.push(new PowerUp(a.x, a.y));
+        if (a.fugaz) {
+          // La fugaz da más puntos y se parte en 2 asteroides normales
+          // (sin soltar power-up directamente)
+          score += FUGAZ_POINTS;
+          explode(a.x, a.y, 10);
+          newAsteroids.push(...a.split());
+        } else {
+          score += POINTS[a.size];
+          explode(a.x, a.y, a.size * 5);
+          newAsteroids.push(...a.split());
+          if (Math.random() < DROP_CHANCE) powerups.push(new PowerUp(a.x, a.y));
+        }
       }
     }
   }
@@ -430,8 +494,8 @@ function update(dt) {
     }
   }
 
-  // Nivel completado
-  if (asteroids.length === 0) nextLevel();
+  // Nivel completado (las fugaces no bloquean el avance)
+  if (!asteroids.some(a => !a.fugaz)) nextLevel();
 }
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
