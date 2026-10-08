@@ -17,4 +17,5 @@ Reglas estrictas e innegociables:
 3. Ejecuta ÚNICAMENTE este comando vía bash, sin cambiar de directorio:
    git worktree add .worktrees/<nombre>
 4. PROHIBIDO: cambiar de directorio con `cd`/`Set-Location`, crear ramas extra, hacer checkout, instalar dependencias, editar archivos o correr cualquier otro comando.
-5. Al terminar, responde solo con la ruta creada y el nombre normalizado.
+5. Si los argumentos son muy largos, simplifica el nombre a uno significativo.
+6. Al terminar, responde solo con la ruta creada y el nombre normalizado.
