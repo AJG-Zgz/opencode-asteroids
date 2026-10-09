@@ -1,0 +1,112 @@
+name: Formatear issue
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  formatear:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: Formatear cuerpo y asignar labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const MARKER = '<!-- formateado-por: issue-formatter -->';
+            const issue = context.payload.issue;
+            const repo = context.repo;
+            const originalBody = (issue.body || '').trim();
+
+            // Idempotencia: no reformatear si ya tiene la marca
+            if (originalBody.includes(MARKER)) {
+              core.info(`Issue #${issue.number} ya formateado, se omite.`);
+              return;
+            }
+
+            // Normaliza: minúsculas + sin tildes para comparar keywords en ES/EN
+            const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            const text = norm(`${issue.title || ''}\n${issue.body || ''}`);
+            const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const has = (kw) => {
+              const k = norm(kw);
+              // Frases multi-palabra: coincidencia directa; palabra sola: con límites para evitar falsos positivos (p. ej. "doc" en "doctor", "poder" como verbo común)
+              if (k.includes(' ')) return text.includes(k);
+              return new RegExp(`\\b${esc(k)}\\b`).test(text);
+            };
+
+            const RULES = [
+              { label: 'bug', keywords: ['bug', 'error', 'falla', 'fallo', 'no funciona', 'se rompe', 'crash', 'excepcion'] },
+              { label: 'enhancement', keywords: ['feature', 'funcionalidad', 'propuesta', 'mejora', 'sugerencia', 'poder', 'estaria bien'] },
+              { label: 'question', keywords: ['pregunta', 'duda', 'como se', 'cómo', 'ayuda'] },
+              { label: 'documentation', keywords: ['doc', 'readme', 'documentacion', 'comentario'] },
+              { label: 'juego', keywords: ['nave', 'disparo', 'bala', 'asteroide', 'colision', 'nivel', 'puntaje', 'vidas', 'game over', 'invencible'] },
+            ];
+
+            const LABEL_DEFS = {
+              bug: { color: 'd73a4a', description: 'Algo no funciona' },
+              enhancement: { color: 'a2eeef', description: 'Nueva funcionalidad o mejora' },
+              question: { color: 'd876e3', description: 'Pregunta o ayuda' },
+              documentation: { color: '0075ca', description: 'Mejoras en documentación' },
+              juego: { color: '0e8a16', description: 'Relacionado con el juego' },
+              triage: { color: 'fbca04', description: 'Pendiente de revisión' },
+            };
+
+            let matched = RULES.filter((r) => r.keywords.some(has)).map((r) => r.label);
+            if (matched.length === 0) matched = ['triage'];
+
+            // Crea labels faltantes para evitar error 422 al asignar
+            const existing = new Set(
+              (await github.paginate(github.rest.issues.listLabelsForRepo, { ...repo, per_page: 100 })).map((l) => l.name)
+            );
+            for (const name of matched) {
+              if (!existing.has(name)) {
+                const def = LABEL_DEFS[name] || { color: 'ededed', description: 'Etiqueta automática' };
+                await github.rest.issues.createLabel({ ...repo, name, color: def.color, description: def.description });
+                core.info(`Label creado: ${name}`);
+              }
+            }
+            await github.rest.issues.addLabels({ ...repo, issue_number: issue.number, labels: matched });
+            core.info(`Labels asignados a #${issue.number}: ${matched.join(', ')}`);
+
+            // Metadata básica (sin datos sensibles)
+            const shortSha = (context.sha || '').substring(0, 7);
+            const cuerpoOriginal = originalBody === '' ? '(sin descripción)' : originalBody.trim();
+            const nuevoBody = `${MARKER}
+            ## Información automática
+
+            | Campo | Valor |
+            |---|---|
+            | Autor | @${issue.user.login} |
+            | Fecha (UTC) | ${issue.created_at} |
+            | Issue | #${issue.number} |
+            | Repositorio | ${context.payload.repository.full_name} |
+            | Ref (\`main\`) | \`${shortSha}\` |
+            | URL | ${issue.html_url} |
+
+            ## Descripción original
+
+            ${cuerpoOriginal}
+
+            ## Para completar por el autor
+
+            ### Pasos para reproducir
+            - [ ] 1.
+            - [ ] 2.
+
+            ### Comportamiento esperado
+            <!-- describe qué esperabas -->
+
+            ### Comportamiento actual
+            <!-- describe qué pasa -->
+
+            ### Entorno (navegador / SO)
+            <!-- ej. Chrome 126, Windows 11 -->
+
+            ---
+            *Formateo automático: se conservó tu texto original. Completa las secciones pendientes para agilizar la revisión.*`;
+
+            await github.rest.issues.update({ ...repo, issue_number: issue.number, body: nuevoBody });
+            core.info(`Cuerpo de #${issue.number} formateado.`);
