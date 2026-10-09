@@ -207,6 +207,23 @@ const SKINS = [
       ctx.stroke();
     },
   },
+  {
+    id: 'titan',
+    nombre: 'TITÁN',
+    color: '#b366ff',
+    escala: 2,
+    puntosMult: 2,
+    dibujar() {
+      // Misma silueta que la clásica; el 2x lo da ctx.scale(escala)
+      ctx.beginPath();
+      ctx.moveTo( 20,  0);   // nariz
+      ctx.lineTo(-12, -9);   // ala izquierda
+      ctx.lineTo( -7,  0);   // muesca trasera
+      ctx.lineTo(-12,  9);   // ala derecha
+      ctx.closePath();
+      ctx.stroke();
+    },
+  },
 ];
 
 function cargarSkin() {
@@ -227,6 +244,15 @@ function cicloSkin() {
   guardarSkin();
 }
 
+// Escala visual y de colisión de la nave activa (1 en skins sin campo escala)
+function escalaNave() { return SKINS[currentSkin].escala || 1; }
+
+// Multiplicador de puntos de la nave activa (1 en skins sin campo puntosMult)
+function multPuntos() { return SKINS[currentSkin].puntosMult || 1; }
+
+// Suma puntos aplicando el multiplicador de la nave activa
+function sumarPuntos(base) { score += base * multPuntos(); }
+
 // ── Ship ──────────────────────────────────────────────────────────────────────
 class Ship {
   constructor() { this.reset(); }
@@ -237,7 +263,7 @@ class Ship {
     this.angle  = -Math.PI / 2;
     this.vx     = 0;
     this.vy     = 0;
-    this.radius = 12;
+    this.radius = 12 * escalaNave();
     this.thrusting     = false;
     this.invincible    = 3;
     this.shootCooldown = 0;
@@ -281,7 +307,7 @@ class Ship {
   tryShoot() {
     if (this.shootCooldown > 0 || this.dead) return [];
     this.shootCooldown = 0.2;
-    const NOSE = 21;
+    const NOSE = 21 * escalaNave();
     const ox = this.x + Math.cos(this.angle) * NOSE;
     const oy = this.y + Math.sin(this.angle) * NOSE;
     if (this.tripleShot > 0) {
@@ -303,6 +329,7 @@ class Ship {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
+    ctx.scale(escalaNave(), escalaNave());
     ctx.strokeStyle = SKINS[currentSkin].color;
     ctx.lineWidth   = 1.5;
     ctx.lineJoin    = 'round';
@@ -570,7 +597,7 @@ function update(dt) {
   }
 
   // Cambiar skin de la nave
-  if (pressed('KeyC')) cicloSkin();
+  if (pressed('KeyC')) { cicloSkin(); ship.radius = 12 * escalaNave(); }
 
   ship.update(dt);
   bullets.forEach(b => b.update(dt));
@@ -600,11 +627,11 @@ function update(dt) {
         if (a.fugaz) {
           // La fugaz da más puntos y se parte en 2 asteroides normales
           // (sin soltar power-up directamente)
-          score += FUGAZ_POINTS;
+          sumarPuntos(FUGAZ_POINTS);
           explode(a.x, a.y, 10);
           newAsteroids.push(...a.split());
         } else {
-          score += POINTS[a.size];
+          sumarPuntos(POINTS[a.size]);
           explode(a.x, a.y, a.size * 5);
           newAsteroids.push(...a.split());
           if (Math.random() < DROP_CHANCE) powerups.push(new PowerUp(a.x, a.y, 'speed'));
@@ -650,7 +677,7 @@ function update(dt) {
     if (shielded && shieldHits.length > 0) {
       for (const a of shieldHits) {
         a.dead = true;
-        score += a.fugaz ? FUGAZ_POINTS : POINTS[a.size];
+        sumarPuntos(a.fugaz ? FUGAZ_POINTS : POINTS[a.size]);
         explode(a.x, a.y, a.fugaz ? 10 : a.size * 5);
         newAsteroids.push(...a.split());
         if (!a.fugaz) {
@@ -703,7 +730,9 @@ function drawHUD() {
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.font = '11px monospace';
-  ctx.fillText(`NAVE: ${SKINS[currentSkin].nombre}  (C PARA CAMBIAR)`, 14, H - 12);
+  const mult = multPuntos();
+  const sufijoMult = mult > 1 ? ` x${mult} PUNTOS` : '';
+  ctx.fillText(`NAVE: ${SKINS[currentSkin].nombre}${sufijoMult}  (C PARA CAMBIAR)`, 14, H - 12);
   ctx.font = '15px monospace';
 
   // Barras de efectos activos: pila dinámica (solo activos, en orden)
